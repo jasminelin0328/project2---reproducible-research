@@ -1,0 +1,131 @@
+---
+title: "The Impact of Weather Events"
+author: "Jasmine"
+date: "1/16/2020"
+output:
+  html_document:
+    keep_md: true
+---
+
+## Synopsis
+
+This project involves exploring the U.S. National Oceanic and Atmospheric Administration's (NOAA) storm database. This database tracks characteristics of major storms and weather events in the United States, including when and where they occur, as well as estimates of any fatalities, injuries, and property damage.
+
+The following analysis investigates which types of severe weather events from 1950 to 2011 are most harmful on:
+
+1. Health (injuries and fatalities) 
+2. Property and crops (economic consequences)
+
+Dataset: [Storm Data] (https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2)
+
+There is also some documentation of the database available. Here you will find how some of the variables are constructed/defined.
+
+National Weather Service [Storm Data Documentation](https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2Fpd01016005curr.pdf)
+
+National Climatic Data Center Storm Events [FAQ](https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2FNCDC%20Storm%20Events-FAQ%20Page.pdf)
+
+## Data Processing
+
+### - Load the data
+```{r}
+library("data.table")
+library("ggplot2")
+stormDT <- read.csv("StormData.csv")
+stormDT <- as.data.table(stormDT)
+names(stormDT)
+head(stormDT)
+```
+
+### - Rebuild the data
+```{r}
+stormDT_sub <- stormDT[(EVTYPE != "?" & (INJURIES > 0 | FATALITIES > 0 | PROPDMG > 0 | CROPDMG > 0)), c("EVTYPE", "FATALITIES", "INJURIES", "PROPDMG", "PROPDMGEXP", "CROPDMG", "CROPDMGEXP") ]
+head(stormDT_sub, 20)
+```
+
+### - Convert exponent columns into actual exponents
+```{r}
+# Map property damage alphanumeric exponents to numeric values.
+propDmgKey <-  c("\"\"" = 10^0,
+                 "-" = 10^0, 
+                 "+" = 10^0,
+                 "0" = 10^0,
+                 "1" = 10^1,
+                 "2" = 10^2,
+                 "3" = 10^3,
+                 "4" = 10^4,
+                 "5" = 10^5,
+                 "6" = 10^6,
+                 "7" = 10^7,
+                 "8" = 10^8,
+                 "9" = 10^9,
+                 "H" = 10^2,
+                 "K" = 10^3,
+                 "M" = 10^6,
+                 "B" = 10^9)
+
+# Map crop damage alphanumeric exponents to numeric values
+cropDmgKey <-  c("\"\"" = 10^0,
+                "?" = 10^0, 
+                "0" = 10^0,
+                "K" = 10^3,
+                "M" = 10^6,
+                "B" = 10^9)
+# Convert the exponent columns to actual exponents with mapping property key table
+stormDT_sub$PROPDMGEXP <- as.numeric(lapply(as.character(stormDT_sub$PROPDMGEXP), function(i) propDmgKey[i]))
+# Replace the NA value in exponent columns of property with 10^0
+stormDT_sub[is.na(stormDT_sub$PROPDMGEXP),]$PROPDMGEXP <- rep(10^0, length(stormDT_sub[is.na(stormDT_sub$PROPDMGEXP),]$PROPDMGEXP))
+# Convert the exponent columns to actual exponents with mapping crop key table
+stormDT_sub$CROPDMGEXP <- as.numeric(lapply(as.character(stormDT_sub$CROPDMGEXP), function(i) cropDmgKey[i]))
+# Replace the NA value in exponent columns of crop with 10^0
+stormDT_sub[is.na(stormDT_sub$CROPDMGEXP),]$CROPDMGEXP <- rep(10^0, length(stormDT_sub[is.na(stormDT_sub$CROPDMGEXP),]$CROPDMGEXP))
+head(stormDT_sub, 20)
+```
+
+### - Calculate total fatalities and injuries 
+```{r}
+storm_fatalities <- aggregate(stormDT_sub$FATALITIES, by = list(stormDT_sub$EVTYPE), FUN = sum)
+colnames(storm_fatalities) <- c("EVENT", "FATALITIES")
+storm_injuries <- aggregate(stormDT_sub$INJURIES, by = list(stormDT_sub$EVTYPE), FUN = sum)
+colnames(storm_injuries) <- c("EVENT", "INJURIES")
+storm_health <- merge(storm_fatalities, storm_injuries, by = "EVENT")
+storm_health$TOTAL <- storm_health$FATALITIES + storm_health$INJURIES
+# order by total fatalities and injuries
+storm_health <- storm_health[order(-storm_health$TOTAL),][1:10,]
+storm_health
+```
+
+### - Calculate total property and crop demanages
+```{r}
+storm_prop <- aggregate(stormDT_sub$PROPDMG*stormDT_sub$PROPDMGEXP, by = list(stormDT_sub$EVTYPE), FUN = sum)
+colnames(storm_prop) <- c("EVENT", "PROPERTY_DEMAGE")
+storm_crop <- aggregate(stormDT_sub$CROPDMG*stormDT_sub$CROPDMGEXP, by = list(stormDT_sub$EVTYPE), FUN = sum)
+colnames(storm_crop) <- c("EVENT", "CROP_DEMAGE")
+#head(storm_prop)
+#head(storm_crop)
+storm_economics <- merge(storm_prop, storm_crop, by = "EVENT")
+storm_economics$TOTAL <- storm_economics$PROPERTY_DEMAGE + storm_economics$CROP_DEMAGE
+# Order by total property and crop demanages
+storm_economics <- storm_economics[order(-storm_economics$TOTAL),][1:10,]
+storm_economics
+```
+
+## Result
+
+### - Events that are the most harmful to population health
+```{r}
+storm_health_table <- melt(storm_health, id.vars = "EVENT", variable.name = "FATALITIES/INJURIES", value.name = "VALUE")
+#storm_health_table
+health_chart <- ggplot(storm_health_table, aes(x = reorder(EVENT, -VALUE) , y = VALUE))
+health_chart + geom_bar(stat = "identity", aes(fill = `FATALITIES/INJURIES`), position = "dodge") + theme(axis.text.x = element_text(angle=45, hjust=1)) + ggtitle("Top 10 US Killers") + theme(plot.title = element_text(hjust = 0.5)) + xlab("Event type") + ylab("Frequency Count")
+storm_health[which.max(storm_health$TOTAL),]
+```
+
+### - Events that have the Greatest Economic Consequences
+```{r}
+storm_economics_table <- melt(storm_economics, id.vars = "EVENT", variable.name = "PROPERTY/CROP", value.name = "VALUE")
+#storm_economics_table
+health_chart <- ggplot(storm_economics_table, aes(x = reorder(EVENT, -VALUE) , y = VALUE))
+health_chart + geom_bar(stat = "identity", aes(fill = `PROPERTY/CROP`), position = "dodge") + theme(axis.text.x = element_text(angle=45, hjust=1)) + ggtitle("Top 10 US Events causing Economic Consequences") + theme(plot.title = element_text(hjust = 0.5)) + xlab("Event type") + ylab("Demage cost (Dollars)")
+storm_economics[which.max(storm_economics$TOTAL),]
+```
+
